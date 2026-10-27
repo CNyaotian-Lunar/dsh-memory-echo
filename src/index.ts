@@ -32,7 +32,7 @@ export const inject = ['tools']
 export interface EchoConfig {
   /** 是否启用。关闭后不注册工具、不扫描。 */
   enabled: boolean
-  /** 库的基础目录；空表示 `$DSH_HOME/data/dsh-memory-echo`。 */
+  /** 库的基础目录（工作区根）；空表示跟随当前工作区。 */
   dbDir: string
   /** 会话日志根目录；空表示 `$DSH_HOME/sessions`。 */
   sessionsRoot: string
@@ -65,16 +65,29 @@ export function resolveConfig(input: Partial<EchoConfig> = {}): EchoConfig {
 /**
  * 解析库路径。
  *
- * 默认落在 DSH 数据目录（`$DSH_HOME/data/dsh-memory-echo`），**不用 process.cwd()** ——
- * 宿主进程的 cwd 是应用安装目录：不可控、升级会抹掉、且所有工作区会共用一个库。
- * 传 base 可覆盖（测试用）。
+ * 默认落在**工作区**下（`<workspace>/.dsh-memory-echo/echo.db`）—— 库跟着工作区走，
+ * 重装 DSH 不会丢。工作区来自 `session.header.cwd`，拿不到时才退回
+ * `$DSH_HOME/data/dsh-memory-echo`。
+ *
+ * 🩸 绝不用 `process.cwd()`：那是宿主进程的安装目录，不可控、升级会被抹掉，
+ * 而且所有工作区会共用一个库。
  *
  * ⚠️ 这里只解析路径、不建目录：建目录失败该由 apply 决定怎么降级，
  * 而不是让插件在加载阶段就抛出去。
  */
-export function echoDbPath(base?: string | null): string {
-  const root = base ?? process.env.DSH_HOME ?? join(homedir(), '.dsh')
+export function echoDbPath(workspace?: string | null): string {
+  if (typeof workspace === 'string' && workspace.length > 0) {
+    return join(workspace, '.dsh-memory-echo', 'echo.db')
+  }
+  const root = process.env.DSH_HOME ?? join(homedir(), '.dsh')
   return join(root, 'data', 'dsh-memory-echo', 'echo.db')
+}
+
+/** 从宿主 Session 里取工作区；取不到返回 null。 */
+function workspaceOf(ctx: Context): string | null {
+  const session = (ctx as unknown as { session?: { header?: { cwd?: unknown } } }).session
+  const cwd = session?.header?.cwd
+  return typeof cwd === 'string' && cwd.length > 0 ? cwd : null
 }
 
 /**
@@ -87,7 +100,7 @@ export function apply(ctx: Context, input: Partial<EchoConfig> = {}): void {
   const config = resolveConfig(input)
   if (!config.enabled) return
 
-  const dbPath = echoDbPath(config.dbDir === '' ? null : config.dbDir)
+  const dbPath = echoDbPath(config.dbDir === '' ? workspaceOf(ctx) : config.dbDir)
 
   // 目录建不出来时不要抛：工具仍然注册，查询时会返回 unavailable。
   // 插件加载失败比"能装但库不可用"更糟 —— 后者用户至少能看到原因。
