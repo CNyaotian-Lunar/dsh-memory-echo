@@ -62,14 +62,6 @@ export function resolveConfig(input: Partial<EchoConfig> = {}): EchoConfig {
   }
 }
 
-export type EchoConfig = {
-  enabled: boolean
-  dbDir: string
-  sessionsRoot: string
-  autoScan: boolean
-  autoScanDays: number
-}
-
 /**
  * 解析库路径。
  *

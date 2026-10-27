@@ -51,6 +51,13 @@ export interface ScanOptions {
   sinceDays?: number | null
   /** 是否跳过子代理会话（默认 true）。 */
   skipSubagent?: boolean
+  /**
+   * 原话保留多少天后淡出（默认 30；0 = 永不过期）。
+   *
+   * 「淡出」不是删除：到达这个时刻后默认查询看不到，
+   * 数据仍在库里，`includeExpired: true` 依然能取回。
+   */
+  retentionDays?: number
 }
 
 /**
@@ -138,5 +145,5 @@ export interface EchoStore {
   close(): void
 }
 
-/** 扫描器接口（由 scan.ts 实现）。 */
+/** 扫描器签名（scan.ts 导出的 scanSessions 符合它）。 */
 export type Scanner = (opts?: ScanOptions) => ScanResult

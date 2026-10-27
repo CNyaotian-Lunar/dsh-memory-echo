@@ -219,6 +219,11 @@ const REDACT_PATTERNS: ReadonlyArray<readonly [RegExp, string]> = [
   [/([?&](?:sig|signature|token|access_token|api_key|key|auth|X-Amz-Signature|X-Amz-Credential)=)[^\s&#"']{8,}/gi, '$1<已脱敏>'],
   // password= / passwd= / pwd=
   [/\b(pass(?:word|wd)?|pwd)\s*=\s*[^\s;&"']{6,}/gi, '$1=<已脱敏>'],
+  // 制表符分隔的 cookie 表（DevTools 里直接复制出来的那种，没有等号）
+  [/\b(SESSDATA|__cf_bm|__security_mc_1_s_sdk_cert_key|csrftoken|sessionid)\t[^\t\r\n]{8,}/gi, '$1\t<已脱敏>'],
+  // 裸长串：≥32 位 hex（会话 id / 密钥常见）、≥40 位 base64（token 常见）
+  [/\b[0-9a-f]{32,}\b/gi, '<已脱敏:hex>'],
+  [/\b[A-Za-z0-9+/_-]{40,}={0,2}\b/g, '<已脱敏:b64>'],
 ]
 
 function redact(text: string): string {
@@ -238,6 +243,7 @@ export function scanSessions(opts: ScanOptions = {}): ScanResult {
 
   const root = opts.sessionsRoot ?? defaultSessionsRoot()
   const skipSubagent = opts.skipSubagent ?? true
+  const retentionDays = opts.retentionDays ?? 30
   const sinceDays = opts.sinceDays ?? null
   const cutoff = sinceDays === null ? null : Date.now() - sinceDays * 86_400_000
 
@@ -317,8 +323,9 @@ export function scanSessions(opts: ScanOptions = {}): ScanResult {
         saidAt,
         sessionId,
         frameSeq: frame,
-        // 扫描进来的原话默认不过期；"淡忘"由上层按需写入 validUntil 表达。
-        validUntil: null,
+        // 按保留期算淡出时刻：过了这个点，默认查询就看不到它了，
+        // 但数据还在（includeExpired 仍可取回）。null = 永不过期。
+        validUntil: retentionDays > 0 ? saidAt + retentionDays * 86_400_000 : null,
       })
     }
   }
@@ -326,4 +333,4 @@ export function scanSessions(opts: ScanOptions = {}): ScanResult {
   return { utterances, filesScanned, filesSkipped, framesScanned, errors }
 }
 
-export default scanSessions
+

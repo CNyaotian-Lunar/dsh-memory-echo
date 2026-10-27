@@ -111,7 +111,7 @@ export function buildEchoTool(store: EchoStore): ToolDefinition {
           // 宿主子集不支持 type 数组（JsonSchemaError），且 oneOf 旁边不许出现 description。
           miss: {
             oneOf: [
-              { type: 'string', enum: ['not-found', 'unavailable', 'empty-db'] },
+              { type: 'string', enum: ['not-found', 'unavailable', 'empty-db', 'expired'] },
               { type: 'null' },
             ],
           },
