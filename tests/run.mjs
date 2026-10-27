@@ -8,18 +8,18 @@ import { join } from 'node:path'
 import { tmpdir } from 'node:os'
 import { zstdCompressSync } from 'node:zlib'
 
-/** Prefer the build output; fall back to the TypeScript source (Node >= 22.18). */
-async function loadScanner() {
-  for (const rel of ['../lib/scan.js', '../src/scan.ts']) {
-    try {
-      const mod = await import(new URL(rel, import.meta.url).href)
-      const fn = mod.scanSessions ?? mod.scan ?? mod.default
-      if (typeof fn === 'function') return fn
-    } catch {
-      // try the next candidate
-    }
+/**
+ * 只加载【构建产物】，**不回退 TS 源码**。
+ *
+ * 回退看起来"更宽容"，实际是有害的：它会让人误以为测试覆盖了发布物，
+ * 而真正被打包的代码一步都没跑过（2026-10-28 就这么漏了一个"装上就抛"的缺陷）。
+ */
+async function loadTestkit() {
+  try {
+    return await import(new URL('../lib/testkit.js', import.meta.url).href)
+  } catch (error) {
+    throw new Error(`cannot load lib/testkit.js — run \`npm run build\` first: ${error.message}`)
   }
-  throw new Error('cannot load the scanner: run `npm run build`, or use Node >= 22.18')
 }
 
 const FRAME_MAGIC = Buffer.from('28b52ffd', 'hex')
@@ -67,7 +67,8 @@ function equalJson(actual, expected, message) {
   if (a !== b) throw new Error(`${message}: got ${a}, want ${b}`)
 }
 
-const scanSessions = await loadScanner()
+const kit = await loadTestkit()
+const scanSessions = kit.scanSessions
 const scratch = mkdtempSync(join(tmpdir(), 'dsh-memory-echo-test-'))
 
 try {
@@ -184,4 +185,50 @@ try {
 }
 
 console.log(`\n${passed} passed, ${failed} failed`)
+// ── 注册冒烟 ──────────────────────────────────────────────
+// 专门拦「装上就抛」那类缺陷：tool schema 不合宿主子集时，
+// ctx.tools.register() 会直接 throw ⇒ 插件加载失败、工具根本不存在。
+// 不真的走一次 apply() 就永远发现不了（2026-10-28 就这么漏掉一个 P0）。
+try {
+  const { apply } = await import(new URL('../lib/index.js', import.meta.url).href)
+  let registered = null
+  // 收集 dispose 回调：不 close 的话 SQLite 还占着文件，临时目录删不掉（EPERM）。
+  const disposers = []
+  const ctx = {
+    tools: { register: (tool) => { registered = tool } },
+    on: (event, fn) => { if (event === 'dispose') disposers.push(fn) },
+    logger: { info: () => {}, warn: () => {} },
+  }
+  const smokeDir = mkdtempSync(join(tmpdir(), 'echo-smoke-'))
+  try {
+    apply(ctx, {
+      enabled: true,
+      dbDir: smokeDir,
+      sessionsRoot: '',
+      autoScan: false,
+      autoScanDays: 1,
+    })
+    assert(registered !== null, 'apply() 没有注册任何工具')
+    assert(registered.name === 'memory_echo', `工具名不对: ${registered.name}`)
+    assert(registered.output && typeof registered.output.schema === 'object', '缺 output.schema')
+    assert(registered.parameters && registered.parameters.type === 'object', '缺 parameters')
+    // render 挂在 output 上（宿主契约），不是工具顶层
+    assert(typeof registered.output.render === 'function', 'output.render 不存在')
+    const blocks = registered.output.render({}, { note: 'x', total: 1, miss: null, hits: [], buckets: [] })
+    assert(Array.isArray(blocks), 'render 应返回 content blocks 数组')
+    assert(blocks[0] && blocks[0].type === 'text', 'render 的 block 应有 type=text')
+    passed += 1
+    console.log('ok   注册冒烟：apply() 不抛且注册出 memory_echo')
+  } finally {
+    // 先让插件自己收尾（关库），再删目录；删不掉也不该让测试红
+    for (const dispose of disposers) {
+      try { dispose() } catch { /* 收尾失败不影响断言 */ }
+    }
+    try { rmSync(smokeDir, { recursive: true, force: true }) } catch { /* Windows 上可能仍被占用 */ }
+  }
+} catch (error) {
+  failed += 1
+  console.log(`FAIL 注册冒烟: ${error.message}`)
+}
+
 if (failed > 0) process.exitCode = 1

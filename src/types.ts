@@ -64,6 +64,13 @@ export type MissReason =
   | 'unavailable'
   /** 库是空的（还没扫描过），与"没有"是两回事。 */
   | 'empty-db'
+  /**
+   * 有记录，但都已经淡忘（valid_until 过了），默认查询看不到。
+   *
+   * 🩸 这一种必须单独存在：把「淡忘了」说成「没说过」，
+   * 正是这套东西最不能犯的错（设计约束 3）。
+   */
+  | 'expired'
 
 /** 时间分桶：按**滚动窗口**切，不按日历日切。 */
 export interface EchoBucket {

@@ -83,8 +83,8 @@ export function buildEchoTool(store: EchoStore): ToolDefinition {
       additionalProperties: false,
       properties: {
         query: { type: 'string', description: PARAM_DESCRIPTION.query },
-        days: { type: 'integer', minimum: 1, maximum: 3650, description: PARAM_DESCRIPTION.days },
-        limit: { type: 'integer', minimum: 1, maximum: 50, default: 10, description: PARAM_DESCRIPTION.limit },
+        days: { type: 'integer', description: PARAM_DESCRIPTION.days },
+        limit: { type: 'integer', description: PARAM_DESCRIPTION.limit },
     mode: {
       type: 'string',
       enum: ['list', 'bucket'],
@@ -108,10 +108,12 @@ export function buildEchoTool(store: EchoStore): ToolDefinition {
             type: 'integer',
             description: '命中的总条数，可能大于返回的 hits 条数。',
           },
+          // 宿主子集不支持 type 数组（JsonSchemaError），且 oneOf 旁边不许出现 description。
           miss: {
-            type: ['string', 'null'],
-            enum: ['not-found', 'unavailable', 'empty-db', null],
-            description: '没有命中的原因；有命中时为 null。',
+            oneOf: [
+              { type: 'string', enum: ['not-found', 'unavailable', 'empty-db'] },
+              { type: 'null' },
+            ],
           },
           hits: {
             type: 'array',
@@ -125,9 +127,22 @@ export function buildEchoTool(store: EchoStore): ToolDefinition {
                 saidAt: { type: 'integer', description: '说话时刻，毫秒时间戳。' },
                 sessionId: { type: 'string', description: '来自哪个会话。' },
                 frameSeq: {
-                  type: ['integer', 'null'],
-                  description: '在会话日志中的帧序号，用于溯源；未知时为 null。',
+                  oneOf: [{ type: 'integer' }, { type: 'null' }],
                 },
+              },
+            },
+          },
+          buckets: {
+            type: 'array',
+            items: {
+              type: 'object',
+              additionalProperties: false,
+              required: ['from', 'to', 'count', 'samples'],
+              properties: {
+                from: { type: 'integer' },
+                to: { type: 'integer' },
+                count: { type: 'integer' },
+                samples: { type: 'array', items: { type: 'string' } },
               },
             },
           },
@@ -135,15 +150,37 @@ export function buildEchoTool(store: EchoStore): ToolDefinition {
       },
       render: (_args, value) => {
         const v = value as
-          | { note?: unknown; total?: unknown; miss?: unknown; hits?: unknown }
+          | {
+              note?: unknown
+              total?: unknown
+              miss?: unknown
+              hits?: unknown
+              buckets?: unknown
+            }
           | null
           | undefined
 
         const note = typeof v?.note === 'string' ? v.note : ''
         const hits = Array.isArray(v?.hits) ? v.hits : []
+        const buckets = Array.isArray(v?.buckets) ? v.buckets : []
         const lines: string[] = []
 
         if (note !== '') lines.push(note)
+
+        // 聚合模式：模型必须能看见"哪一段、几条、样例长什么样"，
+        // 否则它只拿到一句总数，答不了「昨天聊了啥」。
+        for (const raw of buckets) {
+          if (raw === null || typeof raw !== 'object') continue
+          const bucket = raw as { from?: unknown; to?: unknown; count?: unknown; samples?: unknown }
+          const from = typeof bucket.from === 'number' ? bucket.from : 0
+          const to = typeof bucket.to === 'number' ? bucket.to : 0
+          const count = typeof bucket.count === 'number' ? bucket.count : 0
+          lines.push(`- ${formatTime(from)} ~ ${formatTime(to)}：${count} 条`)
+          for (const sample of Array.isArray(bucket.samples) ? bucket.samples : []) {
+            if (typeof sample !== 'string') continue
+            lines.push(`    · ${sample}`)
+          }
+        }
 
         for (const raw of hits) {
           if (raw === null || typeof raw !== 'object') continue
@@ -153,7 +190,8 @@ export function buildEchoTool(store: EchoStore): ToolDefinition {
           lines.push(`- [${formatTime(saidAt)}] ${text}`)
         }
 
-        return lines.join('\n')
+        // 宿主契约：render 返回 content blocks，而不是裸 string。
+        return [{ type: 'text', text: lines.join('\n') }]
       },
     },
     async execute(args: unknown) {

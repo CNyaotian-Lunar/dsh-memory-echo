@@ -11,6 +11,19 @@ const pkg = JSON.parse(readFileSync(new URL('./package.json', import.meta.url), 
 
 mkdirSync(new URL('./lib', import.meta.url), { recursive: true })
 
+// 测试入口单独打一个 bundle：让测试跑【产物】而不是 TS 源码。
+// 少这一个包，测试就会悄悄退回 `src/*.ts`，于是"测过了"不代表"发布物可用"。
+await build({
+  entryPoints: ['src/testkit.ts'],
+  bundle: true,
+  platform: 'node',
+  format: 'esm',
+  target: 'node22',
+  outfile: 'lib/testkit.js',
+  logLevel: 'error',
+  external: ['@deepseek-ai/*'],
+})
+
 await build({
   entryPoints: ['src/index.ts'],
   bundle: true,

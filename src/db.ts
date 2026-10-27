@@ -238,7 +238,16 @@ class SqliteEchoStore implements EchoStore {
 
       const keyword = q.query?.trim() ?? ''
       if (keyword === '') {
-        if (rows.length === 0) return this.miss('not-found', NOTE_NOT_FOUND)
+        if (rows.length === 0) {
+          const expired = this.countExpired()
+          if (!q.includeExpired && expired > 0) {
+            return this.miss(
+              'expired',
+              `有 ${expired} 条已经淡忘了；默认不再返回。要翻更早的，带 includeExpired: true。`,
+            )
+          }
+          return this.miss('not-found', NOTE_NOT_FOUND)
+        }
         return {
           hits: rows.slice(0, limit).map(toUtterance),
           total: rows.length,
@@ -276,7 +285,19 @@ class SqliteEchoStore implements EchoStore {
         if (passed) matched.push({ row, score: 0.6 * coverage + 0.4 * similarity })
       }
 
-      if (matched.length === 0) return this.miss('not-found', NOTE_NOT_FOUND)
+      if (matched.length === 0) {
+        // 区分「真没有」和「有过但淡忘了」—— 后者不是「没说过」。
+        if (!q.includeExpired) {
+          const expired = this.countExpired()
+          if (expired > 0) {
+            return this.miss(
+              'expired',
+              `有 ${expired} 条已经淡忘了；默认不再返回。要翻更早的，带 includeExpired: true。`,
+            )
+          }
+        }
+        return this.miss('not-found', NOTE_NOT_FOUND)
+      }
 
       const hits = matched
         .slice()
@@ -312,6 +333,25 @@ class SqliteEchoStore implements EchoStore {
       // 关闭失败不影响调用方；进程退出时操作系统会回收句柄。
     } finally {
       this.db = null
+    }
+  }
+
+  /**
+   * 有多少条已经淡忘（`valid_until` 已过）。
+   *
+   * 不带关键词：它回答的是「库里有没有被淡忘的东西」，
+   * 而不是「你要找的那条是不是被淡忘了」—— 后者做不到，
+   * 而前者已经足够让回答从「没有」变成「有，但已经淡忘」。
+   */
+  private countExpired(): number {
+    if (this.db === null) return 0
+    try {
+      const row = this.db
+        .prepare('SELECT COUNT(*) AS n FROM utterance WHERE valid_until IS NOT NULL AND valid_until <= ?')
+        .get(Date.now()) as unknown as { n: number }
+      return row.n
+    } catch {
+      return 0
     }
   }
 

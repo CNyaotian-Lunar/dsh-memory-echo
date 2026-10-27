@@ -1,5 +1,5 @@
 node_modules/
-lib/
+# lib/ 故意不忽略：npm 的 files 只含 lib，从 GitHub 直接装也要能拿到产物
 *.bak-*
 *.log
 *.tsbuildinfo

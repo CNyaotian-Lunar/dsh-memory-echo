@@ -22,7 +22,36 @@ import type { ScanOptions, ScanResult, Utterance } from './types.js'
 const FRAME_MAGIC = Buffer.from('28b52ffd', 'hex')
 const SESSION_FILE = /^session\.v\d+\.jsonl\.zstd$/
 const FORCE_PREFIX = /^!force\s+/
-const TASK_BRIEF_HEAD = /^(?:先读\s*[A-Za-z]:|你是独立|你是[^\n]{0,12}(?:审查员|分析员|研究员))/
+/**
+ * 任务书开头的形态。
+ *
+ * 真实语料里漏检最多的三种，都是**标记符把关键词切开了**：
+ *   「你是**架构诊断员**」        → 加粗
+ *   「你是某某（带括号的角色名）子线程」 → 括号
+ *   「先读 `<盘符>:\…`」        → 反引号
+ * 所以判定前先把这些标记剥掉（见 normalizeForBrief）。
+ */
+/**
+ * 判定前先剥掉标记符。
+ *
+ * 真实语料里漏检最多的是「标记把关键词切开了」：
+ *   你是**架构诊断员**      → 加粗
+ *   你是某某（带括号的角色名）子线程 → 括号
+ *   先读 `<盘符>:\…`      → 反引号
+ * 直接拿原文正则匹配，这三种全都漏。
+ */
+function normalizeForBrief(text: string): string {
+  return text
+    .replace(/[*_~`]/g, '')
+    .replace(/[（(【\[]/g, ' ')
+    .replace(/[）)】\]]/g, ' ')
+    .replace(/\s+/g, ' ')
+    .trimStart()
+}
+
+/** 任务书开头的形态（在归一化文本上匹配）。 */
+const TASK_BRIEF_HEAD =
+  /^(?:先读\s*[A-Za-z]:|你是(?:独立|一个?\s*[^\n]{0,16}(?:助手|子线程|子代理|审查|分析|研究|诊断|审计|架构|工程)))/
 
 interface RawContentBlock {
   type?: string
@@ -148,7 +177,7 @@ function normaliseText(raw: string): string | null {
   if (text === '') return null
   // Task briefs are long and start with a recognisable directive; a length floor keeps
   // short conversational text such as "你是独立的吗" from being mistaken for one.
-  if (text.length > 200 && TASK_BRIEF_HEAD.test(text)) return null
+  if (text.length > 200 && TASK_BRIEF_HEAD.test(normalizeForBrief(text))) return null
   return text
 }
 
@@ -177,12 +206,19 @@ const REDACT_PATTERNS: ReadonlyArray<readonly [RegExp, string]> = [
   [/\bsk-[A-Za-z0-9_-]{16,}/g, '<已脱敏:key>'],
   // JWT（三段点分）
   [/\beyJ[A-Za-z0-9_-]{10,}\.[A-Za-z0-9_-]{10,}\.[A-Za-z0-9_-]{10,}/g, '<已脱敏:jwt>'],
-  // 常见会话 cookie 的键值对
-  [/\b(__cf_bm|__cflb|cf_clearance|csrftoken|sessionid)\s*=\s*[^\s;&"']{8,}/gi, '$1=<已脱敏>'],
-  // 请求头
-  [/\b(authorization|cookie)\s*:\s*[^\r\n]{8,}/gi, '$1: <已脱敏>'],
-  // 查询串里的签名 / token
-  [/([?&](?:sig|signature|token|access_token|api_key|key|auth)=)[^\s&#"']{8,}/gi, '$1<已脱敏>'],
+  // 常见会话 cookie 的键值对：按名字逐条列，覆盖 B 站 / Cloudflare / 通用 session。
+  // 不用动态拼接的正则 —— 那个写法既难读，也容易在转义上出错。
+  [/\bSESSDATA\s*=\s*[^\s;&"']{8,}/gi, 'SESSDATA=<已脱敏>'],
+  [/\b__security_mc_1_s_sdk_cert_key\s*=\s*[^\s;&"']{8,}/gi, '__security_mc_1_s_sdk_cert_key=<已脱敏>'],
+  [/\b(__cf_bm|__cflb|cf_clearance|csrftoken|sessionid|bili_jct|DedeUserID|JSESSIONID|PHPSESSID)\s*=\s*[^\s;&"']{8,}/gi, '$1=<已脱敏>'],
+  // 请求头：半角与【全角】冒号都要吃（中文输入法很常见）
+  [/\b(authorization|cookie)\s*[:：]\s*[^\r\n]{8,}/gi, '$1: <已脱敏>'],
+  // 裸 Bearer token（没有 header 前缀时也要抓）
+  [/\bBearer\s+[A-Za-z0-9._~+/=-]{16,}/gi, 'Bearer <已脱敏>'],
+  // 查询串里的签名 / token / 云存储签名
+  [/([?&](?:sig|signature|token|access_token|api_key|key|auth|X-Amz-Signature|X-Amz-Credential)=)[^\s&#"']{8,}/gi, '$1<已脱敏>'],
+  // password= / passwd= / pwd=
+  [/\b(pass(?:word|wd)?|pwd)\s*=\s*[^\s;&"']{6,}/gi, '$1=<已脱敏>'],
 ]
 
 function redact(text: string): string {
