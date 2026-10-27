@@ -1,0 +1,7 @@
+node_modules/
+lib/
+*.bak-*
+*.log
+*.tsbuildinfo
+.DS_Store
+Thumbs.db

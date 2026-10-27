@@ -1,0 +1,50 @@
+{
+  "name": "dsh-memory-echo",
+  "version": "0.1.0",
+  "description": "Utterance-level short-term memory for DeepSeek Harness — keeps what was actually said, not just the distilled conclusions.",
+  "description_zh": "DeepSeek Harness 的原话级短期记忆：保留真正说过的话，而不只是提炼后的结论。",
+  "type": "module",
+  "main": "lib/index.js",
+  "exports": {
+    ".": "./lib/index.js"
+  },
+  "files": [
+    "lib"
+  ],
+  "scripts": {
+    "build": "node build.mjs",
+    "test": "node tests/run.mjs"
+  },
+  "keywords": [
+    "dsh",
+    "dsh-plugin",
+    "deepseek-harness",
+    "memory",
+    "episodic",
+    "recall"
+  ],
+  "license": "MIT",
+  "author": "CNyaotian-Lunar",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/CNyaotian-Lunar/dsh-memory-echo.git"
+  },
+  "engines": {
+    "node": ">=22.13"
+  },
+  "peerDependencies": {
+    "@deepseek-ai/dsh": "*"
+  },
+  "peerDependenciesMeta": {
+    "@deepseek-ai/dsh": {
+      "optional": true
+    }
+  },
+  "devDependencies": {
+    "esbuild": "^0.25.0",
+    "typescript": "^5.6.0"
+  },
+  "allowScripts": {
+    "esbuild@0.25.12": true
+  }
+}
