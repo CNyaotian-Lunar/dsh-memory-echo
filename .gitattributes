@@ -1,0 +1,5 @@
+# 一律 LF。Windows 上 core.autocrlf=true 会把工作区换成 CRLF，
+# 而 CRLF 会让按字面匹配的替换工具（ops_replace 等）全部匹配失败。
+* text=auto eol=lf
+*.png binary
+*.jpg binary
