@@ -221,9 +221,13 @@ const REDACT_PATTERNS: ReadonlyArray<readonly [RegExp, string]> = [
   [/\b(pass(?:word|wd)?|pwd)\s*=\s*[^\s;&"']{6,}/gi, '$1=<已脱敏>'],
   // 制表符分隔的 cookie 表（DevTools 里直接复制出来的那种，没有等号）
   [/\b(SESSDATA|__cf_bm|__security_mc_1_s_sdk_cert_key|csrftoken|sessionid)\t[^\t\r\n]{8,}/gi, '$1\t<已脱敏>'],
-  // 裸长串：≥32 位 hex（会话 id / 密钥常见）、≥40 位 base64（token 常见）
-  [/\b[0-9a-f]{32,}\b/gi, '<已脱敏:hex>'],
-  [/\b[A-Za-z0-9+/_-]{40,}={0,2}\b/g, '<已脱敏:b64>'],
+  // 🩸 裸长串只洗「确实像密钥」的，**宁可漏也不误杀** —— 这层存的是用户原话，
+  // 误杀会毁掉记忆内容（2026-10-28 独立复核实测：原来的宽口径把 709 条 session id / 59 条
+  // git SHA 都当秘密洗了，占真实原话的 7.14%，与本节自己写的「宁可精确」相反）。
+  //   · hex 只洗 64 位（SHA-256 级密钥）；32 位（MD5）/40 位（git SHA）多是标识符，放过
+  //   · base64 要求**同时含大小写和数字** —— 真 token 如此，普通长标识符通常不是
+  [/\b[0-9a-f]{64}\b/gi, '<已脱敏:hex>'],
+  [/\b(?=[A-Za-z0-9+/_-]*[a-z])(?=[A-Za-z0-9+/_-]*[A-Z])(?=[A-Za-z0-9+/_-]*[0-9])[A-Za-z0-9+/_-]{40,}={0,2}\b/g, '<已脱敏:b64>'],
 ]
 
 function redact(text: string): string {

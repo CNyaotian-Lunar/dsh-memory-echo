@@ -239,7 +239,7 @@ class SqliteEchoStore implements EchoStore {
       const keyword = q.query?.trim() ?? ''
       if (keyword === '') {
         if (rows.length === 0) {
-          const expired = this.countExpired()
+          const expired = this.countExpired(keyword)
           if (!q.includeExpired && expired > 0) {
             return this.miss(
               'expired',
@@ -280,15 +280,16 @@ class SqliteEchoStore implements EchoStore {
         // 改成子串包含：命中即算，靠时间倒序把最近的排在前。宁可多捞，不可漏判。
         // ⚠️ 必须与分词同口径地忽略大小写 —— 分词走 toLowerCase()，若这里大小写敏感，
         // 查 `NAS` 就匹配不到文本里的 `nas`，又会退回「把取不到说成没说过」那个错。
-        const passed =
-          queryVector.size >= 2 ? coverage >= MIN_COVERAGE : row.text.toLowerCase().includes(keyword.toLowerCase())
-        if (passed) matched.push({ row, score: 0.6 * coverage + 0.4 * similarity })
+        if (this.matchesKeyword(row.text, keyword)) {
+          matched.push({ row, score: 0.6 * coverage + 0.4 * similarity })
+        }
       }
 
       if (matched.length === 0) {
         // 区分「真没有」和「有过但淡忘了」—— 后者不是「没说过」。
+        // ⚠️ 必须传 keyword：数全库会把「任意一条无关的过期记录」当成「你说的那条淡忘了」。
         if (!q.includeExpired) {
-          const expired = this.countExpired()
+          const expired = this.countExpired(keyword)
           if (expired > 0) {
             return this.miss(
               'expired',
@@ -337,19 +338,47 @@ class SqliteEchoStore implements EchoStore {
   }
 
   /**
-   * 有多少条已经淡忘（`valid_until` 已过）。
+   * 一条原话是否命中关键词 —— **与 query 完全同口径**。
+   *
+   * 抽出来的原因：`countExpired` 也必须按它过滤，否则「库里有任意一条过期记录」
+   * 就会让任何查询都答「有 N 条已经淡忘了」—— 那等于把「你没说过」伪造成
+   * 「你说过但忘了」，比原来的 bug 更严重（2026-10-28 独立复核实测）。
+   */
+  private matchesKeyword(text: string, keyword: string): boolean {
+    const queryVector = tokenize(keyword)
+    if (queryVector.size === 0) return false
+    const documentVector = tokenize(text)
+    let hit = 0
+    for (const key of queryVector.keys()) {
+      if (documentVector.has(key)) hit += 1
+    }
+    if (hit === 0) return false
+    // 单 token 走子串包含（余弦会被长文档稀释），多 token 看覆盖率 —— 与 query 一致
+    return queryVector.size >= 2
+      ? hit / queryVector.size >= MIN_COVERAGE
+      : text.toLowerCase().includes(keyword.toLowerCase())
+  }
+
+  /**
+   * 有多少条**与本次查询相关**的已经淡忘（`valid_until` 已过）。
    *
    * 不带关键词：它回答的是「库里有没有被淡忘的东西」，
    * 而不是「你要找的那条是不是被淡忘了」—— 后者做不到，
    * 而前者已经足够让回答从「没有」变成「有，但已经淡忘」。
    */
-  private countExpired(): number {
+  private countExpired(keyword: string): number {
     if (this.db === null) return 0
     try {
-      const row = this.db
-        .prepare('SELECT COUNT(*) AS n FROM utterance WHERE valid_until IS NOT NULL AND valid_until <= ?')
-        .get(Date.now()) as unknown as { n: number }
-      return row.n
+      const rows = this.db
+        .prepare('SELECT text FROM utterance WHERE valid_until IS NOT NULL AND valid_until <= ?')
+        .all(Date.now()) as unknown as Array<{ text: string }>
+      // 空关键词（只按时间取）才数全部；否则必须同口径过滤
+      if (keyword.trim() === '') return rows.length
+      let n = 0
+      for (const row of rows) {
+        if (this.matchesKeyword(row.text, keyword)) n += 1
+      }
+      return n
     } catch {
       return 0
     }

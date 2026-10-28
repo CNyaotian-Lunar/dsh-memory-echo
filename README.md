@@ -31,7 +31,7 @@ dsh plugin add link:$(pwd)
 | --- | --- |
 | **读取 Reads** | `$DSH_HOME/sessions/**/session.v4.jsonl.zstd` —— 你的会话日志 / your session logs |
 | **只取 Keeps only** | 你自己发的消息（`source.kind === 'user'`）；不取助手回复、工具输出、子代理任务书 / your own messages only |
-| **写入 Writes** | `<workspace>/.dsh-memory-echo/echo.db`（SQLite，跟着工作区走 / next to your workspace）；拿不到工作区时退回 `$DSH_HOME/data/dsh-memory-echo/echo.db` |
+| **写入 Writes** | `$DSH_HOME/data/dsh-memory-echo/echo.db`（SQLite，**全局一份** / one global DB）；想换位置就设 `dbDir` |
 | **网络 Network** | 无。插件不发任何请求 / none |
 
 ## 隐私 / Privacy
@@ -56,8 +56,7 @@ This is a **local** plugin, but it does copy **what you said** into a local SQLi
    Disable the plugin, then delete that directory. Nothing else is created.
 
    ```
-   删除 / delete: <workspace>/.dsh-memory-echo/
-   （拿不到工作区时在 $DSH_HOME/data/dsh-memory-echo/）
+   删除 / delete: $DSH_HOME/data/dsh-memory-echo/
    ```
 
 ## 配置 / Configuration
@@ -65,7 +64,7 @@ This is a **local** plugin, but it does copy **what you said** into a local SQLi
 | 键 Key | 默认 Default | 说明 |
 | --- | --- | --- |
 | `enabled` | `true` | 关掉后不注册工具、不扫描 / disables everything |
-| `dbDir` | `''` | 库的基础目录；空 = 跟随当前工作区（`<workspace>/.dsh-memory-echo`）|
+| `dbDir` | `''` | 库所在**完整目录**；空 = `$DSH_HOME/data/dsh-memory-echo`。⚠️ **库是全局一份，不按工作区分** —— 这层存的是「你说过的话」，换个工作区不改变你是谁 |
 | `sessionsRoot` | `''` | 会话日志根；空 = `$DSH_HOME/sessions` |
 | `autoScan` | `true` | 加载时做一次增量扫描 / incremental scan on load |
 | `autoScanDays` | `7` | 增量扫描回看几天 |

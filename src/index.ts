@@ -148,13 +148,20 @@ export function echoDbPath(dir?: string | null): string {
 }
 
 /** 从宿主 Session 里取工作区；取不到返回 null。 */
-function workspaceOf(): string | null {
-  // 🩸 不能读 `ctx.session` —— cordis 会抛 `cannot get property "session" without inject`，
-  // 而且 apply 执行时 session 服务还没实例化（它在事件回调里才拿得到）。
-  // 所以工作区只能从「显式配置」或「环境变量」来，拿不到就退回 $DSH_HOME。
-  const env = process.env.DSH_WORKSPACE
-  return typeof env === 'string' && env.length > 0 ? env : null
-}
+/**
+ * 库是**全局的**，不按工作区分。
+ *
+ * 🩸 曾经想按工作区定位，但那做不到也别做：
+ * ① `ctx.session` 在 `apply` 里读会抛 `cannot get property "session" without inject`；
+ * ② `DSH_WORKSPACE` 这个环境变量**宿主根本不设**（2026-10-28 实测：env 为空，
+ *    宿主 129 个包里递归 grep 0 命中）。
+ *
+ * 而且**按工作区分开本身就不对**：这层存的是"你说过的原话"，
+ * 换个工作区并不改变"你"是谁。所有工作区的原话放一个库才是符合直觉的。
+ *
+ * ⇒ 路径只由 `Config.dbDir` 决定（profile patch 里覆盖成本机路径），
+ *   兜底 `$DSH_HOME/data/dsh-memory-echo/`。
+ */
 
 /**
  * 插件入口。
@@ -178,17 +185,33 @@ function applyInner(ctx: Context, input: Partial<EchoConfig> = {}): void {
   const config = resolveConfig(input)
   if (!config.enabled) return
 
-  const dbPath = echoDbPath(config.dbDir === '' ? workspaceOf() : config.dbDir)
+  const dbPath = echoDbPath(config.dbDir === '' ? null : config.dbDir)
 
   // 目录建不出来时不要抛：工具仍然注册，查询时会返回 unavailable。
   // 插件加载失败比"能装但库不可用"更糟 —— 后者用户至少能看到原因。
   let store: EchoStore
+  let degraded = false
   try {
     mkdirSync(join(dbPath, '..'), { recursive: true })
     store = openStore(dbPath)
   } catch (error) {
-    ctx.logger?.warn?.(`dsh-memory-echo: 无法准备数据目录 ${dbPath}: ${error instanceof Error ? error.message : String(error)}`)
-    store = openStore(':memory:')
+    const reason = error instanceof Error ? error.message : String(error)
+    ctx.logger?.warn?.(`dsh-memory-echo: 无法准备数据目录 ${dbPath}: ${reason}`)
+    // 🩸 不撒谎：库建不出来时**不要**降级成内存库 —— 那样查询会报 `empty-db`
+    // （"尚未扫描任何会话"），用户以为记忆在工作，重启才发现全丢。
+    // 这里给一个永远回答 `unavailable` 的 store，把真实原因带出去。
+    degraded = true
+    store = {
+      upsert: () => 0,
+      count: () => 0,
+      close: () => {},
+      query: () => ({
+        hits: [],
+        total: 0,
+        miss: 'unavailable' as const,
+        note: `库不可用：${reason}。数据目录 ${dbPath} 建不出来。`,
+      }),
+    }
   }
 
   ctx.tools.register(buildEchoTool(store))
@@ -201,7 +224,8 @@ function applyInner(ctx: Context, input: Partial<EchoConfig> = {}): void {
     }
   })
 
-  if (config.autoScan) {
+  // 降级时不扫描：扫进一个内存库等于白干，还会在日志里报「wrote N」让人误以为在工作。
+  if (config.autoScan && !degraded) {
     // 启动后异步补一次：不阻塞插件加载，失败只记日志。
     queueMicrotask(() => {
       try {

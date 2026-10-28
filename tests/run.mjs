@@ -211,6 +211,32 @@ try {
     assert(registered !== null, 'apply() 没有注册任何工具')
     assert(registered.name === 'memory_echo', `工具名不对: ${registered.name}`)
     assert(registered.output && typeof registered.output.schema === 'object', '缺 output.schema')
+
+    // 🩸 真护栏：抄宿主 assertSupportedJsonSchema 的关键规则（宿主那包在 app.asar 里、
+    // 测试拿不到）。原来的注册冒烟用 stub register，宿主校验器一次都没跑过 ——
+    // 那次 schema 能过是"修对了"，不是"测试拦住了"（2026-10-28 独立复核指出）。
+    const ALLOWED_BESIDE_ONEOF = new Set([
+      'type', 'oneOf', 'properties', 'required', 'additionalProperties', 'items', 'enum', 'const',
+    ])
+    function checkSubsetSchema(schema, path) {
+      if (schema === null || typeof schema !== 'object') return
+      if (Array.isArray(schema.type)) throw new Error(`${path}.type 是类型数组（宿主只接受单个字符串）`)
+      for (const k of ['minimum', 'maximum']) {
+        if (k in schema) throw new Error(`${path}.${k} 不在宿主 schema 子集内`)
+      }
+      if (schema.oneOf) {
+        for (const key of Object.keys(schema)) {
+          if (!ALLOWED_BESIDE_ONEOF.has(key)) throw new Error(`${path}.${key} 不能与 oneOf 并存`)
+        }
+        schema.oneOf.forEach((s, i) => checkSubsetSchema(s, `${path}.oneOf[${i}]`))
+      }
+      if (schema.properties) {
+        for (const [k, v] of Object.entries(schema.properties)) checkSubsetSchema(v, `${path}.properties.${k}`)
+      }
+      if (schema.items) checkSubsetSchema(schema.items, `${path}.items`)
+    }
+    checkSubsetSchema(registered.output.schema, 'output.schema')
+    checkSubsetSchema(registered.parameters, 'parameters')
     assert(registered.parameters && registered.parameters.type === 'object', '缺 parameters')
     // render 挂在 output 上（宿主契约），不是工具顶层
     assert(typeof registered.output.render === 'function', 'output.render 不存在')
