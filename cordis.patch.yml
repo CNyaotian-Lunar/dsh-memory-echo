@@ -1,0 +1,10 @@
+# dsh-memory-echo · bundle patch：把「原话级短期记忆」插件行注入 profile 的 loader 树。
+#
+# 只挂 Node half（lib/index.js）：注册一个 `memory_echo` 工具 + 加载时做一次增量扫描。
+# 没有 client half、不注入上下文。
+#
+# ⚠️ `name` 是**模块说明符**（= 本包名 `dsh-memory-echo`）。
+# ⚠️ 顶层是 YAML 数组，每项必须是 mapping（写错宿主会直接 throw）。
+- insert:
+    - id: memory-echo
+      name: 'dsh-memory-echo'

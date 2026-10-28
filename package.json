@@ -6,11 +6,19 @@
   "type": "module",
   "main": "lib/index.js",
   "exports": {
-    ".": "./lib/index.js"
+    ".": "./lib/index.js",
+    "./cordis.patch.yml": "./cordis.patch.yml",
+    "./package.json": "./package.json"
   },
   "files": [
-    "lib"
+    "lib",
+    "cordis.patch.yml"
   ],
+  "dsh": {
+    "bundle": {
+      "patch": "./cordis.patch.yml"
+    }
+  },
   "scripts": {
     "build": "node build.mjs",
     "typecheck": "tsc --noEmit",
@@ -32,7 +40,8 @@
     "url": "git+https://github.com/CNyaotian-Lunar/dsh-memory-echo.git"
   },
   "engines": {
-    "node": ">=22.13"
+    "node": ">=22.13",
+    "dsh": ">=0.2.0-rc.2"
   },
   "peerDependencies": {
     "@deepseek-ai/dsh": "*"
