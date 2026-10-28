@@ -12,6 +12,7 @@
  */
 
 import type { Context } from '@deepseek-ai/cordis'
+import z from '@deepseek-ai/schemastery'
 import { mkdirSync } from 'node:fs'
 import { homedir } from 'node:os'
 import { join } from 'node:path'
@@ -42,23 +43,49 @@ export interface EchoConfig {
   autoScanDays: number
 }
 
-/** 宿主读这个常量做配置界面；纯对象即可，不需要 schema 库。 */
-export const Config = {
+/**
+ * 插件配置的 schema。
+ *
+ * 🩸 必须是 schemastery 的 `Schema`，不能是纯对象 —— 宿主 loader 会用它
+ * 生成默认 config 并写进运行时 `cordis.yml`。给纯对象时宿主读不到 schema，
+ * 该条目不会带 config、插件也不会被 apply（2026-10-28 实测：装上了但工具不存在、库不建）。
+ * 这是拿"零依赖"换"装不上"的教训。
+ */
+export const Config = z.object({
+  /** 是否启用。关闭后不注册工具、不扫描。 */
+  enabled: z.boolean().default(true).description('Enable the plugin.'),
+  /** 库的基础目录（工作区根）；空表示跟随当前工作区。 */
+  dbDir: z.string().default('').description('Base directory for the database. Empty means the current workspace.'),
+  /** 会话日志根目录；留空则使用 $DSH_HOME/sessions。 */
+  sessionsRoot: z.string().default('').description('Root of DSH session logs.'),
+  /** 启动时是否做一次增量扫描。 */
+  autoScan: z.boolean().default(true).description('Run an incremental scan when the plugin loads.'),
+  /** 增量扫描回看天数。 */
+  autoScanDays: z.number().default(7).description('How many days back the automatic scan looks.'),
+})
+
+/**
+ * 默认值（独立于 `Config` 存一份）。
+ *
+ * 🩸 不能从 `Config` 上读 `.enabled` —— 它现在是 schemastery 的 Schema，不是普通对象；
+ * 读属性只会拿到 undefined。默认值必须是这里这份可读的字面量。
+ */
+const DEFAULTS: EchoConfig = {
   enabled: true,
   dbDir: '',
   sessionsRoot: '',
   autoScan: true,
   autoScanDays: 7,
-} satisfies EchoConfig
+}
 
 /** 合并用户配置与默认值。 */
 export function resolveConfig(input: Partial<EchoConfig> = {}): EchoConfig {
   return {
-    enabled: input.enabled ?? Config.enabled,
-    dbDir: input.dbDir ?? Config.dbDir,
-    sessionsRoot: input.sessionsRoot ?? Config.sessionsRoot,
-    autoScan: input.autoScan ?? Config.autoScan,
-    autoScanDays: input.autoScanDays ?? Config.autoScanDays,
+    enabled: input.enabled ?? DEFAULTS.enabled,
+    dbDir: input.dbDir ?? DEFAULTS.dbDir,
+    sessionsRoot: input.sessionsRoot ?? DEFAULTS.sessionsRoot,
+    autoScan: input.autoScan ?? DEFAULTS.autoScan,
+    autoScanDays: input.autoScanDays ?? DEFAULTS.autoScanDays,
   }
 }
 
