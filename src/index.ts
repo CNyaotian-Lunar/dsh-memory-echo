@@ -13,7 +13,7 @@
 
 import type { Context } from '@deepseek-ai/cordis'
 import z from '@deepseek-ai/schemastery'
-import { mkdirSync } from 'node:fs'
+import { appendFileSync, mkdirSync } from 'node:fs'
 import { homedir } from 'node:os'
 import { join } from 'node:path'
 import { openStore } from './db.js'
@@ -23,6 +23,42 @@ import type { EchoStore } from './types.js'
 
 export const name = 'dsh-memory-echo'
 export const inject = ['tools']
+
+/**
+ * 诊断埋点：把阶段与错误写进文件。
+ *
+ * 为什么需要：插件在 DSH 里标「异常」但 UI 点不开，宿主日志也找不到，
+ * 只能让插件自己在每个阶段留下痕迹。定位完可以删掉这几处调用。
+ */
+// 只有显式设置 DSH_ECHO_DIAG 才写（默认零副作用、零文件）。
+// 值可以是文件路径，也可以是相对 $DSH_HOME 的名字。
+function diagFile(): string | null {
+  const target = process.env.DSH_ECHO_DIAG
+  if (typeof target !== 'string' || target.length === 0) return null
+  if (target === '1') {
+    const root = process.env.DSH_HOME ?? join(homedir(), '.dsh')
+    return join(root, 'cache', 'dsh-memory-echo-diag.log')
+  }
+  return target
+}
+
+function diag(stage: string, detail?: unknown): void {
+  const file = diagFile()
+  if (file === null) return
+  try {
+    const tail =
+      detail === undefined
+        ? ''
+        : ' :: ' + (detail instanceof Error ? (detail.stack ?? detail.message) : String(detail))
+    mkdirSync(join(file, '..'), { recursive: true })
+    appendFileSync(file, `[${new Date().toISOString()}] ${stage}${tail}\n`, 'utf8')
+  } catch {
+    /* 诊断本身绝不许影响主流程 */
+  }
+}
+
+// 模块顶层：走到这里说明 import 全部成功
+diag('module-loaded')
 
 /**
  * 插件配置（显式默认值，不引入 schema 库）。
@@ -102,19 +138,22 @@ export function resolveConfig(input: Partial<EchoConfig> = {}): EchoConfig {
  * ⚠️ 这里只解析路径、不建目录：建目录失败该由 apply 决定怎么降级，
  * 而不是让插件在加载阶段就抛出去。
  */
-export function echoDbPath(workspace?: string | null): string {
-  if (typeof workspace === 'string' && workspace.length > 0) {
-    return join(workspace, '.dsh-memory-echo', 'echo.db')
+export function echoDbPath(dir?: string | null): string {
+  // 传了目录就用它（完整目录，不再拼子路径）
+  if (typeof dir === 'string' && dir.length > 0) {
+    return join(dir, 'echo.db')
   }
   const root = process.env.DSH_HOME ?? join(homedir(), '.dsh')
   return join(root, 'data', 'dsh-memory-echo', 'echo.db')
 }
 
 /** 从宿主 Session 里取工作区；取不到返回 null。 */
-function workspaceOf(ctx: Context): string | null {
-  const session = (ctx as unknown as { session?: { header?: { cwd?: unknown } } }).session
-  const cwd = session?.header?.cwd
-  return typeof cwd === 'string' && cwd.length > 0 ? cwd : null
+function workspaceOf(): string | null {
+  // 🩸 不能读 `ctx.session` —— cordis 会抛 `cannot get property "session" without inject`，
+  // 而且 apply 执行时 session 服务还没实例化（它在事件回调里才拿得到）。
+  // 所以工作区只能从「显式配置」或「环境变量」来，拿不到就退回 $DSH_HOME。
+  const env = process.env.DSH_WORKSPACE
+  return typeof env === 'string' && env.length > 0 ? env : null
 }
 
 /**
@@ -124,10 +163,22 @@ function workspaceOf(ctx: Context): string | null {
  * 这与「查不到必须说清楚」一致：能查就一直能查，不能查要说原因。
  */
 export function apply(ctx: Context, input: Partial<EchoConfig> = {}): void {
+  diag('apply-enter', JSON.stringify(input))
+  try {
+    applyInner(ctx, input)
+    diag('apply-ok')
+  } catch (error) {
+    diag('apply-FAILED', error)
+    throw error
+  }
+}
+
+/** 真正的实现；外面那层只负责留痕。 */
+function applyInner(ctx: Context, input: Partial<EchoConfig> = {}): void {
   const config = resolveConfig(input)
   if (!config.enabled) return
 
-  const dbPath = echoDbPath(config.dbDir === '' ? workspaceOf(ctx) : config.dbDir)
+  const dbPath = echoDbPath(config.dbDir === '' ? workspaceOf() : config.dbDir)
 
   // 目录建不出来时不要抛：工具仍然注册，查询时会返回 unavailable。
   // 插件加载失败比"能装但库不可用"更糟 —— 后者用户至少能看到原因。
