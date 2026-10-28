@@ -17,13 +17,17 @@
   "dsh": {
     "bundle": {
       "patch": "./cordis.patch.yml"
+    },
+    "compatibility": {
+      "dshReleases": {
+        "0.2.1-rc.2": "compatible"
+      }
     }
   },
   "scripts": {
     "build": "node build.mjs",
     "typecheck": "tsc --noEmit",
-    "test": "node build.mjs && tsc --noEmit && node tests/run.mjs",
-    "prepare": "node build.mjs"
+    "test": "node build.mjs && tsc --noEmit && node tests/run.mjs"
   },
   "keywords": [
     "dsh",
@@ -44,10 +48,14 @@
     "dsh": ">=0.2.0-rc.2"
   },
   "peerDependencies": {
-    "@deepseek-ai/dsh": "*"
+    "@deepseek-ai/dsh": "*",
+    "@deepseek-ai/schemastery": "*"
   },
   "peerDependenciesMeta": {
     "@deepseek-ai/dsh": {
+      "optional": true
+    },
+    "@deepseek-ai/schemastery": {
       "optional": true
     }
   },
